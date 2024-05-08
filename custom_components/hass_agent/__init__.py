@@ -14,8 +14,9 @@ from homeassistant.components.mqtt.subscription import (
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ID, CONF_NAME, CONF_URL, Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import discovery
+from homeassistant.util.json import json_loads
 
 from .const import DOMAIN
 
@@ -24,7 +25,7 @@ PLATFORMS: list[Platform] = [Platform.MEDIA_PLAYER]
 _logger = logging.getLogger(__name__)
 
 
-def update_device_info(hass: HomeAssistant, entry: ConfigEntry, new_device_info):
+async def update_device_info(hass: HomeAssistant, entry: ConfigEntry, new_device_info):
     device_registry = dr.async_get(hass)
     device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
@@ -128,7 +129,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "media_player": False,  # unsupported for the moment
         }
 
-        hass.async_create_task(handle_apis_changed(hass, entry, apis))
+        hass.async_create_background_task(handle_apis_changed(hass, entry, apis))
         hass.data[DOMAIN][entry.entry_id]["apis"] = apis
 
     else:
@@ -136,15 +137,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         sub_state = hass.data[DOMAIN][entry.entry_id]["internal_mqtt"]
 
-        def updated(message: ReceiveMessage):
-            payload = json.loads(message.payload)
+        @callback
+        async def updated(message: ReceiveMessage):
+            payload = json_loads(message.payload)
             cached = hass.data[DOMAIN][entry.entry_id]["apis"]
             apis = payload["apis"]
 
-            update_device_info(hass, entry, payload)
+            await update_device_info(hass, entry, payload)
 
             if cached != apis:
-                hass.async_create_task(handle_apis_changed(hass, entry, apis))
+                hass.async_create_background_task(handle_apis_changed(hass, entry, apis), "hass.agent-mqtt")
                 hass.data[DOMAIN][entry.entry_id]["apis"] = apis
 
         sub_state = async_prepare_subscribe_topics(
